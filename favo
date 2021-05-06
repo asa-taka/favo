@@ -3,15 +3,17 @@
 # Environment variables
 # ---------------------
 
+# All configurable environment variable list.
 declare -a envs
 
-# Declare environment variable based global shell variables with its
-# default value and description.
+# declare_env declares a global shell variable based on
+# same name environment variable, with its default value and description.
 # Args: <variable-name> <default-value> <description>
 declare_env() {
   local var="${1}" defval="${2}" desc="${3}"
-  local envval="$(declare | grep ^"${var}" | cut -d= -f2)"
+  local envval="$(declare | grep ^"${var}"= | cut -d= -f2)"
   local val="${envval:-"${defval}"}"
+  # `readonly` defines `$var` as a global shell variable.
   readonly "${var}"="${val}"
   envs+=("${var}|${val}|${desc}")
 }
