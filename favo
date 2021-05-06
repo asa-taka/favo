@@ -4,16 +4,22 @@
 # ---------------------
 
 declare -a envs
+
+# Declare environment variable based global shell variables with its
+# default value and description.
+# Args: <variable-name> <default-value> <description>
 declare_env() {
-  local var="${1}" val="${2}" def="${3}" desc="${4}"
-  declare -g "${var}"="${val:-${def}}"
-  envs+=("${var}|${val}|${3}")
+  local var="${1}" defval="${2}" desc="${3}"
+  local envval="$(declare | grep ^"${var}" | cut -d= -f2)"
+  local val="${envval:-"${defval}"}"
+  readonly "${var}"="${val}"
+  envs+=("${var}|${val}|${desc}")
 }
 
-declare_env FAVO_PATH ${FAVO_PATH} "" \
+declare_env FAVO_PATH "" \
   "Search target locations separated by ':' (e.g. '~/src:~/.local/src/')"
 
-declare_env FAVO_EDITOR ${FAVO_EDITOR} code \
+declare_env FAVO_EDITOR code \
   "A command to open directory (default: code)"
 
 # Utilities
@@ -134,6 +140,7 @@ Usage: favo path
 EOF
 }
 
+# TODO: Support empty value
 favo_path() {
   printf ${FAVO_PATH//:/\\n}
 }
