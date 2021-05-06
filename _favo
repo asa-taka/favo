@@ -1,0 +1,55 @@
+#compdef favo
+
+_describe_dirname() {
+  dirs=("${(@f)$(favo list -1l | awk '{FS="/"; print $NF":"$0}')}")
+  _describe '1:dirs' dirs
+}
+
+_favo_list() {
+  for line in "${(@f)"$(favo list__options)"}"; do
+    _arguments "$(echo "${line}" | sed -e 's/:/[/' -e 's/$/]/')"
+  done
+}
+
+_debug() {
+  if $FAVO_DEBUG; then
+    echo "$@" >> ~/tmp/comp.log
+  fi
+}
+
+_debug $(date)
+
+_favo() {
+  # setopt local_options xtrace
+  local context state line
+  typeset -A opt_args
+
+  _arguments -C \
+    "-h[Show help information]" \
+    "1:command:->command" \
+    "*::options:->options"
+
+  _debug "$(typeset context), $(typeset state), $(typeset line)"
+
+  case $state in
+    command )
+      local -a subcommands
+      for cmd in $(favo _subcommands); do
+        subcommands+=("${cmd}:$(favo ${cmd} -h | head -n 1)")
+      done
+      _describe -t commands 'commands' subcommands
+      ;;
+    options )
+      case $line[1] in
+        list )
+          _favo_list
+          ;;
+        open )
+          _describe_dirname
+          ;;
+        resolve )
+          _describe_dirname
+          ;;
+      esac
+  esac
+}

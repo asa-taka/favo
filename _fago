@@ -1,0 +1,19 @@
+#compdef fago
+
+_fago() {
+  # setopt local_options xtrace
+  local context state line
+  typeset -A opt_args
+
+  _arguments -C \
+    "*::options:->options" \
+    && return
+
+  case $state in
+    (options)
+      targets="$(favo list)"
+      _alternative "dirname:directory in FAV_PATH:(($targets))"
+  esac
+}
+
+_fago "$@"

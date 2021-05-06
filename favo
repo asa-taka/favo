@@ -1,0 +1,285 @@
+#!/bin/bash -ue
+
+# Environment variables
+# ---------------------
+
+declare -a envs
+declare_env() {
+  local var="${1}" val="${2}" def="${3}" desc="${4}"
+  declare -g "${var}"="${val:-${def}}"
+  envs+=("${var}|${val}|${3}")
+}
+
+declare_env FAVO_PATH ${FAVO_PATH} "" \
+  "Search target locations separated by ':' (e.g. '~/src:~/.local/src/')"
+
+declare_env FAVO_EDITOR ${FAVO_EDITOR} code \
+  "A command to open directory (default: code)"
+
+# Utilities
+# ---------
+
+normalize_path() {
+  echo ${1//$HOME/\~}
+}
+
+print_with_desc() {
+  local item="$1"  
+  local desc="$2"
+  local item_col_width=${3:-16}
+  if [ ${#item} -gt "$item_col_width" ]; then
+    printf "  %s\n" "$item"
+    printf "  %-${item_col_width}s  %s\n" "" "$desc"
+  else
+    printf "  %-${item_col_width}s  %s\n" "$item" "$desc"
+  fi
+}
+
+fn_exists() {
+  declare -f -F $1 > /dev/null
+  return $?
+}
+
+# About Help and Option Commands:
+#
+# Every '__help' function of subcommands should print the description at line 1,
+# and the usage at line 2, to be parsed for and construct global help.
+# Every '__options' function of subcommands should print lines
+# which contains <option>:<description>.
+
+help() {
+  cmd=${1}
+  help_cmd=favo_${cmd}__help  
+  if ! fn_exists $help_cmd; then
+    echo "Error: '$cmd' does not provide help." >&2
+    exit 1
+  fi
+  $help_cmd
+
+  opts_cmd=favo_${cmd}__options
+  if fn_exists $opts_cmd; then
+    printf "Options:\n"
+    while IFS=':' read -r -a v; do
+      print_with_desc "${v[0]}" "${v[1]}" 2
+    done <<< "$("${opts_cmd}")"
+  fi
+}
+
+help_and_exit() {
+  help ${1}
+  exit ${2:-0}
+}
+
+# Commands
+# --------
+
+favo_env__help() {
+  cat <<EOF
+Print values of configurable variables.
+Usage: favo env
+EOF
+}
+
+favo_env() {
+  for env_record in "${envs[@]}"; do
+    IFS='|' read -r -a e <<< "$env_record"
+    printf "# %s\n" "${e[2]}"
+    printf "%s=%s\n" "${e[0]}" "${e[1]}"
+  done
+}
+
+favo_resolve__help() {
+  cat <<EOF
+Resolve a directory name from paths.
+Usage: favo resolve <dir-name>
+EOF
+}
+
+favo_resolve() {
+  if [ -z "$1" ]; then
+      favo_resolve__help
+      exit 1
+  fi
+
+  for path in ${FAVO_PATH//:/ }; do
+      dir="${path}/${1}"
+      if [ -d "$dir" ]; then
+          echo ${dir}
+          exit 0
+      fi
+  done
+
+  >&2 echo directory not found in FAVO_PATH: ${1}
+  exit 1
+}
+
+favo_open__help() {
+  cat <<EOF
+Open a directory resolved by name.
+Usage: favo open <dir-name>
+EOF
+}
+
+favo_open() {
+  if dir="$(favo resolve "${1}")"; then
+    echo "open: $(normalize_path $dir)"
+    "${FAVO_EDITOR}" "${dir}"
+  fi
+}
+
+favo_path__help() {
+  cat <<EOF
+Show paths to search directories
+Usage: favo path
+EOF
+}
+
+favo_path() {
+  printf ${FAVO_PATH//:/\\n}
+}
+
+favo_list__help() {
+  cat <<EOF
+Show all directories that resolvable.
+Usage: favo list [-1fl]
+EOF
+}
+
+favo_list__options() {
+  cat <<EOF
+-1:Show to be one file per line.
+-f:Show full/absolute paths.
+-l:Show long paths.
+EOF
+}
+
+favo_list() {
+  declare long=false full=false oneline=false
+  while getopts "1afls" opt; do
+    case ${opt} in
+      1 )
+        oneline=true
+        ;;
+      f )
+        full=true
+        ;;
+      l )
+        long=true
+        ;;
+      \? )
+        help_and_exit list 1
+        ;;
+    esac
+  done
+
+  declare -a results
+  for dir in ${FAVO_PATH//:/ }; do
+    results+=("$(ls -1d ${dir}/*)")
+  done
+
+  # Concat results, and append extra fields to each lines to sort.
+  # Lines are formed as: /full/path,basename,line-num
+  lines=$(printf "\n%s" "${results[@]}" | awk '{FS="/"; OFS=","; print $0,$NF,NR}')
+  
+  # Dedupe by basename, and sort again as detected order.
+  lines=$(echo "$lines" | sort -u -t, -k2,2 | sort -t, -k3,3 -n)
+
+  # Remove fields to sort (separated from above for debugging).
+  lines=$(echo "$lines" | cut -d, -f1)
+
+  # Format paths
+  if ! $full; then
+    if $long; then
+      lines=${lines//$HOME/\~}
+    else
+      lines=$(echo "$lines" | xargs basename | sort)
+    fi
+  fi
+
+  if $oneline; then
+    echo "$lines"
+  else
+    echo "$lines" | column -x
+  fi
+}
+
+favo_init__help() {
+  cat <<EOF
+Print script to declare utilities to eval in profile.
+Usage: favo init
+Declares:
+  fago: 'favo resolve' conbined with 'cd'.
+EOF
+}
+
+favo_init() {
+  cat <<'EOF'
+fago() {
+  local dir=$(favo resolve "${1}")
+  if [ -z "$*" ]; then
+      echo "fago: 'cd' with 'favo resolve'"
+      echo "Usage: fago <dir name>"
+      return 1
+  fi
+  if [ ! -d "$dir" ]; then
+      return 1
+  fi
+  echo cd: ${dir//$HOME/\~}
+  cd "${dir}"
+}
+EOF
+}
+
+favo_help__help() {
+  cat <<EOF
+Print whole help.
+Usage: favo help
+EOF
+}
+
+favo_help() {
+  cat <<EOF
+favo - A directory name resolver for favorite locations(FAVO_PATH)
+Usage: favo <command> [<options> ...]
+EOF
+
+  printf "Commands:\n"
+  for cmd in $(favo__subcommands); do
+    help=$(favo_${cmd}__help)
+    usage=$(echo "$help" | sed -n '2 p' | sed -e 's/^\ *Usage: favo //')
+    desc=$(echo "$help" | sed -n '1 p' | sed -e 's/^\ *//')
+    print_with_desc "$usage" "$desc"
+  done
+
+  printf "Environment variables:\n"
+  for env_record in "${envs[@]}"; do
+    IFS='|' read -r -a e <<< "$env_record"
+    print_with_desc "${e[0]}" "${e[2]}"
+  done
+}
+
+favo__subcommands() {
+  printf "env help init list open path resolve"
+}
+
+cmd=${1:-''}
+case $cmd in
+  "" | "-h" | "--help")
+    favo_help
+    ;;
+  *)
+    shift
+    opt=${1:-''}
+    if [ "$opt" == "-h" ]; then
+      help_and_exit ${cmd}
+    fi
+
+    cmd_impl=favo_${cmd}
+    if ! fn_exists $cmd_impl; then
+        echo "Error: '$cmd' is not a known subcommand." >&2
+        echo "       Run '$(basename $0) --help' for a list of known subcommands." >&2
+        exit 1
+    fi
+    $cmd_impl $@
+    ;;
+esac
